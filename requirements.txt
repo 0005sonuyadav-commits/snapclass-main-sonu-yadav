@@ -1,0 +1,25 @@
+streamlit # it is use for creating the web application and it is used for authentication and authorization of the user
+# utilities
+numpy
+pandas
+# FACE RECOGNITION (spm or spf )
+scikit-learn 
+
+# DLIB USE FOR FACE RECOGNITION
+dlib-bin # it is use for face recognition and it is used for authentication and authorization of the user
+
+git+https://github.com/ageitgey/face_recognition_models # it is use for face recognition and it is used for authentication and authorization of the user
+setuptools>=75.8.1 # required by sip, used for packaging the application
+
+
+supabase # it is use for storing the data in the cloud and it is used for authentication and authorization of the user
+bcrypt # it is use for hashing the password and it is used for authentication and authorization of the user
+
+segno # it is use for generate qr code by giving them the url link and it will generate the qr code for that link
+pillow # it is use for image processing and it is used for authentication and authorization of the user
+
+
+
+librosa # it will load our voice file and also edit like divide into segment etc
+
+resemblyzer # it will create the embedding the voice that check for same voice or not 
