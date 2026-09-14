@@ -4,6 +4,7 @@ pandas
 scikit-learn
 dlib-bin
 setuptools>=75.8.1
+webrtcvad
 supabase
 bcrypt
 segno
