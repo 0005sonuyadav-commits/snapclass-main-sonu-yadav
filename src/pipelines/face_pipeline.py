@@ -1,29 +1,73 @@
+from pathlib import Path
+
 import dlib
 import numpy as np
-import face_recognition_models
 from sklearn.svm import SVC
 import streamlit as st
+
+try:
+    import face_recognition_models
+except ModuleNotFoundError:
+    face_recognition_models = None
 
 from src.database.db import get_all_students
 
 
+def _resolve_model_path(model_name):
+    candidates = []
+
+    if face_recognition_models is not None:
+        if model_name == "pose":
+            candidates.append(face_recognition_models.pose_predictor_model_location())
+        else:
+            candidates.append(face_recognition_models.face_recognition_model_location())
+
+    project_root = Path(__file__).resolve().parents[1]
+    model_dir = project_root / "models"
+
+    if model_name == "pose":
+        candidates.extend([
+            model_dir / "shape_predictor_5_face_landmarks.dat",
+            model_dir / "shape_predictor_68_face_landmarks.dat",
+            Path("/app/models/shape_predictor_5_face_landmarks.dat"),
+        ])
+    else:
+        candidates.extend([
+            model_dir / "dlib_face_recognition_resnet_model_v1.dat",
+            Path("/app/models/dlib_face_recognition_resnet_model_v1.dat"),
+        ])
+
+    for candidate in candidates:
+        if candidate and Path(str(candidate)).exists():
+            return str(candidate)
+
+    return None
+
+
 @st.cache_resource
 def load_dlib_model():
+    pose_model = _resolve_model_path("pose")
+    face_model = _resolve_model_path("face")
+
+    if pose_model is None or face_model is None:
+        st.warning(
+            "Face recognition models are missing. Add the dlib model files under the project models/ directory or install them in the deployment environment."
+        )
+        return None, None, None
+
     detector = dlib.get_frontal_face_detector()
 
-    sp = dlib.shape_predictor(
-        face_recognition_models.pose_predictor_model_location()
-    )
-
-    facerec = dlib.face_recognition_model_v1(
-        face_recognition_models.face_recognition_model_location()
-    )
+    sp = dlib.shape_predictor(pose_model)
+    facerec = dlib.face_recognition_model_v1(face_model)
 
     return detector, sp, facerec
 
 
 def get_face_embedding(image_np):
     detector, sp, facerec = load_dlib_model()
+
+    if detector is None or sp is None or facerec is None:
+        return []
 
     faces = detector(image_np, 1)
 
@@ -117,17 +161,41 @@ def train_classifier():
     return model_data is not None
 
 
+def _best_match_for_encoding(encoding, x_train, y_train):
+    nearest_id = None
+    nearest_distance = None
+    second_distance = None
+
+    for student_id in sorted(set(y_train.tolist())):
+        student_indices = np.where(y_train == student_id)[0]
+
+        for index in student_indices:
+            stored_embedding = x_train[index]
+            distance = float(np.linalg.norm(stored_embedding - encoding))
+
+            if nearest_distance is None or distance < nearest_distance:
+                second_distance = nearest_distance
+                nearest_distance = distance
+                nearest_id = int(student_id)
+            elif second_distance is None or distance < second_distance:
+                second_distance = distance
+
+    return nearest_id, nearest_distance, second_distance
+
+
 def predict_attendance(class_image_np):
     encodings = get_face_embedding(class_image_np)
 
     detected_students = {}
+
+    if not encodings:
+        return detected_students, [], 0
 
     model_data = get_trained_model()
 
     if not model_data:
         return detected_students, [], len(encodings)
 
-    clf = model_data["clf"]
     x_train = model_data["x"]
     y_train = model_data["y"]
 
@@ -139,39 +207,18 @@ def predict_attendance(class_image_np):
         return detected_students, [], len(encodings)
 
     for encoding in encodings:
-
-        if len(all_students) >= 2:
-            predicted_id = int(
-                clf.predict([encoding])[0]
-            )
-        else:
-            predicted_id = int(
-                all_students[0]
-            )
-
-        student_indices = np.where(
-            y_train == predicted_id
-        )[0]
-
-        if len(student_indices) == 0:
-            continue
-
-        distances = []
-
-        for index in student_indices:
-            stored_embedding = x_train[index]
-
-            distance = np.linalg.norm(
-                stored_embedding - encoding
-            )
-
-            distances.append(distance)
-
-        best_match_score = min(distances)
+        nearest_id, nearest_distance, second_distance = _best_match_for_encoding(
+            encoding,
+            x_train,
+            y_train,
+        )
 
         resemblance_threshold = 0.6
+        confidence_margin = 0.08
 
-        if best_match_score <= resemblance_threshold:
-            detected_students[predicted_id] = True
+        if nearest_id is not None and nearest_distance is not None:
+            if nearest_distance <= resemblance_threshold:
+                if second_distance is None or (second_distance - nearest_distance) >= confidence_margin:
+                    detected_students[nearest_id] = True
 
     return detected_students, all_students, len(encodings)
